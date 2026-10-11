@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2M AI Bench (2MA-Bench) - The Frontier Procedural Benchmark</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-logo">2M</div>
+      <div class="brand-text">
+        <h1>2M AI Bench</h1>
+        <div class="brand-tagline">2MA-Bench Frontier Procedural Evaluation Engine</div>
+      </div>
+    </div>
+    <div class="header-status">
+      <span class="badge">Zero Contamination Guarantee</span>
+      <span class="badge" style="border-color: rgba(157, 78, 221, 0.4); color: var(--accent-purple);">100% Deterministic Verifiers</span>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <main class="main-layout">
+    
+    <!-- Left Column: Controls & Configuration -->
+    <div class="config-column">
+      
+      <!-- BYOM Provider Config Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>⚡</span> Bring Your Own Model (BYOM)
+        </div>
+        
+        <div class="form-group">
+          <label for="provider-select">Provider Protocol</label>
+          <select id="provider-select">
+            <option value="openai" selected>OpenAI Compatible (OpenAI, DeepSeek, vLLM, Ollama, OpenRouter, Groq)</option>
+            <option value="anthropic">Anthropic Claude Messages API</option>
+            <option value="mock">Offline Mock / Sanity Oracle</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="base-url">API Base URL</label>
+          <input type="text" id="base-url" value="https://api.openai.com/v1" placeholder="e.g. http://localhost:11434/v1">
+        </div>
+
+        <div class="form-group">
+          <label for="api-key">API Key / Token</label>
+          <input type="password" id="api-key" placeholder="sk-..." autocomplete="off">
+        </div>
+
+        <div class="form-group">
+          <label for="model-name">Model Identifier</label>
+          <input type="text" id="model-name" value="gpt-4o" placeholder="e.g. gpt-4o, claude-3-7-sonnet, deepseek-r1">
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+          <button type="button" class="btn btn-secondary" id="btn-test-connection" style="flex: 1;">
+            🔍 Test Connection
+          </button>
+        </div>
+        <div id="connection-status" style="margin-top: 0.75rem; font-size: 0.8rem; font-family: var(--font-mono); min-height: 1.2rem;"></div>
+      </div>
+
+      <!-- Benchmark Parameters Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>⚙️</span> Benchmark Parameters
+        </div>
+
+        <div class="form-group" style="display: flex; gap: 0.75rem;">
+          <div style="flex: 1;">
+            <label for="eval-seed">Random Seed</label>
+            <input type="number" id="eval-seed" value="42">
+          </div>
+          <div style="align-self: flex-end;">
+            <button type="button" class="btn btn-secondary" id="btn-random-seed" title="Randomize Seed">🎲 Randomize</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="eval-difficulty">Hardness Difficulty</label>
+          <select id="eval-difficulty">
+            <option value="1" selected>Tier 1: Standard Frontier (Hard)</option>
+            <option value="2">Tier 2: Extreme Reasoning (Very Hard)</option>
+            <option value="3">Tier 3: Omega Singularity (Grandmaster)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Procedural Dimensions</label>
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="dimensions" value="smt_logic" checked>
+              1. Dynamic SMT Constraint Satisfaction
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="dimensions" value="vm_emulation" checked>
+              2. Synthetic VM Register Emulation
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="dimensions" value="counterfactual" checked>
+              3. Counterfactual Axiomatic Logic
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="dimensions" value="concurrency" checked>
+              4. Sandboxed Concurrency Bug Repair
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="dimensions" value="epistemic" checked>
+              5. Epistemic Impossibility & Calibration
+            </label>
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-primary" id="btn-start-benchmark" style="margin-top: 1rem;">
+          🚀 Launch 2MA-Bench Run
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Right Column: Results, Live Stream & Analytics -->
+    <div class="results-column">
+
+      <!-- Metrics Row -->
+      <div class="metrics-row">
+        <div class="metric-card highlight">
+          <div class="metric-lbl">Overall Score</div>
+          <div class="metric-val" id="metric-score" style="color: var(--accent-cyan);">--%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-lbl">Pass Rate</div>
+          <div class="metric-val" id="metric-passrate">0 / 0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-lbl">Total Tokens</div>
+          <div class="metric-val" id="metric-tokens">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-lbl">Avg Latency</div>
+          <div class="metric-val" id="metric-latency">0 ms</div>
+        </div>
+      </div>
+
+      <!-- Analytics & Radar Grid -->
+      <div class="analytics-grid">
+        <!-- Live Run Monitor -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-title" style="justify-content: space-between;">
+            <div><span>📡</span> Live Benchmark Execution Monitor</div>
+            <span class="badge" id="run-status-badge">READY</span>
+          </div>
+
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+
+          <div class="event-list" id="event-list">
+            <div style="color: var(--text-muted); text-align: center; padding: 3rem 1rem; font-size: 0.9rem;">
+              Configure your endpoint and click <strong>Launch 2MA-Bench Run</strong> to begin procedural evaluation.
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem;">
+            <button class="btn btn-secondary" id="btn-export-json" disabled>💾 Export JSON</button>
+            <button class="btn btn-secondary" id="btn-export-md" disabled>📄 Export Markdown Report</button>
+          </div>
+        </div>
+
+        <!-- Capability Radar Chart -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-title">
+            <span>📊</span> Capability Radar
+          </div>
+          <div class="chart-container">
+            <canvas id="radar-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Modal for challenge details -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="modal-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.75rem;">
+        <h3 id="modal-title" style="color: var(--accent-cyan);">Challenge Inspection</h3>
+        <button id="btn-close-modal" class="btn btn-secondary" style="padding: 0.3rem 0.6rem;">✕</button>
+      </div>
+      <div id="modal-body" style="margin-top: 1rem;"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
