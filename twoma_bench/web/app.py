@@ -16,10 +16,20 @@ from ..client import create_client, MockClient
 from ..generators import list_dimensions, get_generator
 from ..evaluator.engine import EvaluationConfig, EvaluationEngine, RunSummary
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="2M AI Bench (2MA-Bench)",
     description="The Frontier Procedural Hardness AI Benchmark Dashboard",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # In-memory run store and event queues for SSE

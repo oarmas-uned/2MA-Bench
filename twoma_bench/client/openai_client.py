@@ -31,6 +31,7 @@ class OpenAIClient(BaseLLMClient):
         }
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
+            headers["x-api-key"] = self.config.api_key
         headers.update(self.config.extra_headers)
         return headers
 

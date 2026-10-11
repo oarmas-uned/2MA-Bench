@@ -107,6 +107,13 @@ function setupEventListeners() {
   });
 }
 
+function getApiBaseUrl() {
+  if (window.location.protocol === "file:") {
+    return "http://localhost:8088";
+  }
+  return window.location.origin;
+}
+
 async function testConnection() {
   const statusEl = document.getElementById("connection-status");
   statusEl.style.color = "var(--accent-cyan)";
@@ -120,12 +127,19 @@ async function testConnection() {
   };
 
   try {
-    const res = await fetch("/api/test-connection", {
+    const apiUrl = getApiBaseUrl() + "/api/test-connection";
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Backend (${apiUrl}) returned HTTP ${res.status}: ${text.slice(0, 150) || "Empty response"}`);
+    }
     if (data.success) {
       statusEl.style.color = "var(--accent-green)";
       statusEl.textContent = "✓ " + data.message;
@@ -135,7 +149,11 @@ async function testConnection() {
     }
   } catch (err) {
     statusEl.style.color = "var(--accent-red)";
-    statusEl.textContent = "✕ Error: " + err.message;
+    let msg = err.message;
+    if (window.location.protocol === "file:" && (msg.includes("Failed to fetch") || msg.includes("NetworkError"))) {
+      msg += " (Make sure '2ma-bench serve --port 8088' is running in your terminal!)";
+    }
+    statusEl.textContent = "✕ Error: " + msg;
   }
 }
 
@@ -169,12 +187,19 @@ async function launchBenchmark() {
   document.getElementById("progress-bar").style.width = "0%";
 
   try {
-    const res = await fetch("/api/run", {
+    const apiUrl = getApiBaseUrl() + "/api/run";
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Server returned HTTP ${res.status}: ${text.slice(0, 150)}`);
+    }
     currentRunId = data.run_id;
     startEventStream(currentRunId);
   } catch (err) {
@@ -189,7 +214,8 @@ function startEventStream(runId) {
     eventSource.close();
   }
 
-  eventSource = new EventSource(`/api/stream/${runId}`);
+  const streamUrl = getApiBaseUrl() + `/api/stream/${runId}`;
+  eventSource = new EventSource(streamUrl);
 
   eventSource.onmessage = (e) => {
     try {
