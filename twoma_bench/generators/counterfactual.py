@@ -90,7 +90,7 @@ class CounterfactualGenerator(BaseGenerator):
             f"Sequence of Transformations:\n"
             + "\n".join(events)
             + "\n\nCompute the EXACT state of each field at the end of the sequence.\n"
-            f"Output your final answer as a valid JSON block enclosed in ```json and ```:\n"
+            f"You may reason step-by-step, but you MUST conclude your response with the final state of each field in a valid JSON block enclosed in ```json and ```:\n"
             f"```json\n"
             f"{{\n"
             + ",\n".join(f'  "{f}": <int>' for f in fields)
@@ -111,24 +111,17 @@ class CounterfactualGenerator(BaseGenerator):
         )
 
     async def verify(self, problem: BenchmarkProblem, model_output: str) -> VerifierResult:
-        ground_truth: Dict[str, int] = problem.ground_truth
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", model_output, re.DOTALL)
-        
-        extracted_data = None
-        if json_match:
-            try:
-                extracted_data = json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
+        from .parser_utils import extract_json_dict, extract_key_value_assignments
 
-        if not extracted_data:
-            first_field = list(ground_truth.keys())[0]
-            raw_match = re.search(rf"\{{\s*\"{first_field}\".*?\}}", model_output, re.DOTALL)
-            if raw_match:
-                try:
-                    extracted_data = json.loads(raw_match.group(0))
-                except json.JSONDecodeError:
-                    pass
+        ground_truth: Dict[str, int] = problem.ground_truth
+        field_keys = list(ground_truth.keys())
+
+        # 1. Attempt JSON block extraction with relaxed sanitization and wrapper unpacking
+        extracted_data = extract_json_dict(model_output, target_keys=field_keys, prefer_last=True)
+
+        # 2. Resilient fallback: extract key-value assignments directly from text / tables
+        if not extracted_data or not any(k in extracted_data for k in field_keys):
+            extracted_data = extract_key_value_assignments(model_output, target_keys=field_keys)
 
         if not extracted_data or not isinstance(extracted_data, dict):
             return VerifierResult(

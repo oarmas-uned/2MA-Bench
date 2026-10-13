@@ -199,6 +199,183 @@ print("CONCURRENCY_TEST_PASSED")
             "bug_description": "Uses 'if' instead of 'while' for condition checks in a multi-producer multi-consumer bounded buffer, leading to queue overflow or popping from an empty queue.",
         }
 
+    @staticmethod
+    def get_deadlock_problem(seed: int, difficulty: int) -> Dict[str, Any]:
+        rng = random.Random(seed)
+        class_name = rng.choice(["AccountTransferManager", "BalanceTransferCoordinator", "FundTransferRouter"])
+
+        buggy_code = f"""import threading
+import time
+
+class Account:
+    def __init__(self, acc_id: int, balance: int = 1000):
+        self.id = acc_id
+        self.balance = balance
+        self.lock = threading.Lock()
+
+class {class_name}:
+    \"\"\"Coordinator for multi-account fund transfers.\"\"\"
+    def __init__(self):
+        pass
+
+    def transfer(self, from_acc: Account, to_acc: Account, amount: int) -> bool:
+        # BUG: Acquiring locks in caller order causes AB-BA deadlocks when transfers are reciprocal
+        with from_acc.lock:
+            time.sleep(0.0002)  # Window for lock contention
+            with to_acc.lock:
+                if from_acc.balance >= amount:
+                    from_acc.balance -= amount
+                    to_acc.balance += amount
+                    return True
+                return False
+"""
+
+        oracle_code = f"""import threading
+import time
+
+class Account:
+    def __init__(self, acc_id: int, balance: int = 1000):
+        self.id = acc_id
+        self.balance = balance
+        self.lock = threading.Lock()
+
+class {class_name}:
+    def __init__(self):
+        pass
+
+    def transfer(self, from_acc: Account, to_acc: Account, amount: int) -> bool:
+        # Prevent deadlock with consistent global lock ordering by account id
+        first, second = (from_acc, to_acc) if from_acc.id < to_acc.id else (to_acc, from_acc)
+        with first.lock:
+            with second.lock:
+                if from_acc.balance >= amount:
+                    from_acc.balance -= amount
+                    to_acc.balance += amount
+                    return True
+                return False
+"""
+
+        test_harness = f"""
+import threading
+
+mgr = {class_name}()
+acc1 = Account(1, 10000)
+acc2 = Account(2, 10000)
+
+def worker1():
+    for _ in range(40):
+        mgr.transfer(acc1, acc2, 1)
+
+def worker2():
+    for _ in range(40):
+        mgr.transfer(acc2, acc1, 1)
+
+threads = [threading.Thread(target=worker1) for _ in range(4)] + [threading.Thread(target=worker2) for _ in range(4)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join(timeout=3.0)
+
+assert acc1.balance + acc2.balance == 20000, f"Balance leaked: {{acc1.balance + acc2.balance}}"
+print("CONCURRENCY_TEST_PASSED")
+"""
+
+        return {
+            "title": f"Lock Inversion Deadlock in {class_name}",
+            "class_name": class_name,
+            "buggy_code": buggy_code,
+            "oracle_code": oracle_code,
+            "test_harness": test_harness,
+            "bug_description": "Acquiring locks in caller parameter order causes reciprocal transfers between accounts to deadlock (AB-BA lock ordering). Must impose consistent lock ordering by account ID.",
+        }
+
+    @staticmethod
+    def get_atomic_counter_problem(seed: int, difficulty: int) -> Dict[str, Any]:
+        rng = random.Random(seed)
+        class_name = rng.choice(["ConcurrentHitCounter", "HighThroughputMetricsAggregator", "ThreadSafeRateAuditor"])
+
+        buggy_code = f"""import threading
+import time
+
+class {class_name}:
+    \"\"\"Aggregator tracking global and per-endpoint request metrics.\"\"\"
+    def __init__(self):
+        self.total_hits = 0
+        self.endpoints = {{}}
+        self.lock = threading.Lock()
+
+    def record_hit(self, endpoint: str):
+        # BUG: Unsynchronized read-modify-write on total_hits and endpoints dict
+        current = self.total_hits
+        time.sleep(0.0001)
+        self.total_hits = current + 1
+        if endpoint not in self.endpoints:
+            self.endpoints[endpoint] = 0
+        self.endpoints[endpoint] += 1
+
+    def get_total(self) -> int:
+        return self.total_hits
+
+    def get_endpoint_hits(self, endpoint: str) -> int:
+        return self.endpoints.get(endpoint, 0)
+"""
+
+        oracle_code = f"""import threading
+import time
+
+class {class_name}:
+    def __init__(self):
+        self.total_hits = 0
+        self.endpoints = {{}}
+        self.lock = threading.Lock()
+
+    def record_hit(self, endpoint: str):
+        with self.lock:
+            self.total_hits += 1
+            self.endpoints[endpoint] = self.endpoints.get(endpoint, 0) + 1
+
+    def get_total(self) -> int:
+        with self.lock:
+            return self.total_hits
+
+    def get_endpoint_hits(self, endpoint: str) -> int:
+        with self.lock:
+            return self.endpoints.get(endpoint, 0)
+"""
+
+        test_harness = f"""
+import threading
+
+counter = {class_name}()
+num_threads = 8
+hits_per_thread = 25
+endpoints = ["/api/v1/auth", "/api/v1/data", "/api/v1/health"]
+
+def worker(idx):
+    ep = endpoints[idx % len(endpoints)]
+    for _ in range(hits_per_thread):
+        counter.record_hit(ep)
+
+threads = [threading.Thread(target=worker, args=(i,)) for i in range(num_threads)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join(timeout=3.0)
+
+expected_total = num_threads * hits_per_thread
+assert counter.get_total() == expected_total, f"Expected {{expected_total}} total hits, got {{counter.get_total()}}"
+print("CONCURRENCY_TEST_PASSED")
+"""
+
+        return {
+            "title": f"Unsynchronized Race Condition in {class_name}",
+            "class_name": class_name,
+            "buggy_code": buggy_code,
+            "oracle_code": oracle_code,
+            "test_harness": test_harness,
+            "bug_description": "Unsynchronized reads and writes to shared counter and dictionary cause lost updates under concurrent access.",
+        }
+
 
 class ConcurrencyGenerator(BaseGenerator):
     """Generates concurrent code repair problems with sandboxed stress test verification."""
@@ -216,6 +393,8 @@ class ConcurrencyGenerator(BaseGenerator):
         templates = [
             ConcurrencyBugTemplates.get_token_bucket_problem,
             ConcurrencyBugTemplates.get_condition_variable_problem,
+            ConcurrencyBugTemplates.get_deadlock_problem,
+            ConcurrencyBugTemplates.get_atomic_counter_problem,
         ]
         chosen = rng.choice(templates)(seed, difficulty)
 
@@ -225,10 +404,11 @@ class ConcurrencyGenerator(BaseGenerator):
             f"```python\n{chosen['buggy_code']}\n```\n\n"
             f"Stress Test Suite (executed with 50+ concurrent threads):\n"
             f"```python\n{chosen['test_harness']}\n```\n\n"
-            f"Task:\n"
-            f"Identify and fix the concurrency bug in `{chosen['class_name']}`.\n"
-            f"Your fixed code must pass the high-contention test harness without deadlocks, exceptions, or race conditions.\n"
-            f"Provide your complete corrected class implementation inside a single ```python code block."
+            f"Task & Submission Guidelines:\n"
+            f"1. Identify and repair the concurrency bug in `{chosen['class_name']}`.\n"
+            f"2. Your solution must safely pass the high-contention test harness without deadlocks, exceptions, or race conditions.\n"
+            f"3. Preserve the original class name and all method signatures.\n"
+            f"4. Provide your complete corrected code inside a single ```python and ``` block."
         )
 
         return BenchmarkProblem(
@@ -249,27 +429,35 @@ class ConcurrencyGenerator(BaseGenerator):
         )
 
     async def verify(self, problem: BenchmarkProblem, model_output: str) -> VerifierResult:
-        # Extract python code block
-        code_matches = re.findall(r"```(?:python)?\s*(.*?)```", model_output, re.DOTALL)
-        if not code_matches:
-            return VerifierResult(
-                problem_id=problem.id,
-                dimension=self.dimension_id,
-                passed=False,
-                score=0.0,
-                failure_reason="No ```python code block found in response.",
-            )
-
-        # Pick the block containing the class definition
         class_name = problem.metadata["class_name"]
+
+        # Extract python code blocks (including unclosed fences)
+        code_matches = re.findall(r"```(?:python)?\s*([\s\S]*?)(?:```|$)", model_output)
+        code_matches = [c.strip() for c in code_matches if c.strip()]
+
         candidate_code = None
         for code in code_matches:
             if f"class {class_name}" in code:
                 candidate_code = code
                 break
 
+        # Fallback: scan raw model output if backticks were omitted
+        if not candidate_code and f"class {class_name}" in model_output:
+            raw_match = re.search(rf"(class {re.escape(class_name)}[\s\S]*?)(?=\n\n\n|\Z)", model_output)
+            if raw_match:
+                candidate_code = raw_match.group(1).strip()
+
         if not candidate_code:
-            candidate_code = code_matches[0]
+            if code_matches:
+                candidate_code = code_matches[0]
+            else:
+                return VerifierResult(
+                    problem_id=problem.id,
+                    dimension=self.dimension_id,
+                    passed=False,
+                    score=0.0,
+                    failure_reason="No ```python code block found in response.",
+                )
 
         # Combine fixed code with test harness
         full_script = f"{candidate_code}\n\n{problem.metadata['test_harness']}"

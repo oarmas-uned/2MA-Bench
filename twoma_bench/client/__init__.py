@@ -2,9 +2,10 @@
 LLM Client registry and factory for 2MA-Bench.
 """
 
-from .base import BaseLLMClient, ClientConfig, ModelResponse
+from .base import BaseLLMClient, ClientConfig, ModelResponse, PROVIDER_PRESETS
 from .openai_client import OpenAIClient
 from .anthropic_client import AnthropicClient
+from .gemini_client import GeminiClient
 from .mock_client import MockClient
 
 
@@ -13,6 +14,8 @@ def create_client(config: ClientConfig) -> BaseLLMClient:
     prov = config.provider.lower().strip()
     if prov in ("anthropic", "claude"):
         return AnthropicClient(config)
+    elif prov in ("gemini", "google"):
+        return GeminiClient(config)
     elif prov == "mock":
         return MockClient(config)
     else:
@@ -24,8 +27,11 @@ __all__ = [
     "BaseLLMClient",
     "ClientConfig",
     "ModelResponse",
+    "PROVIDER_PRESETS",
     "OpenAIClient",
     "AnthropicClient",
+    "GeminiClient",
     "MockClient",
     "create_client",
 ]
+

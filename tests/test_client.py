@@ -6,7 +6,7 @@ import pytest
 from twoma_bench.client.base import ClientConfig
 from twoma_bench.client import create_client, MockClient, OpenAIClient, AnthropicClient
 from twoma_bench.evaluator.engine import EvaluationConfig, EvaluationEngine
-from twoma_bench.generators import get_generator
+from twoma_bench.generators import get_generator, generate_benchmark_suite
 
 
 @pytest.mark.asyncio
@@ -40,13 +40,13 @@ async def test_mock_client_oracle():
 async def test_end_to_end_engine_run():
     cfg = ClientConfig(provider="mock")
     seed = 42
+    dims = ["smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"]
+    problems = generate_benchmark_suite(seed=seed, difficulty=1, dimensions=dims)
 
     def oracle_solver(prompt: str) -> str:
-        for d in ["smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"]:
-            gen = get_generator(d)
-            prob = gen.generate(seed, difficulty=1)
-            if prob.prompt[:30] in prompt[:30]:
-                return gen.get_oracle_solution(prob)
+        for prob in problems:
+            if prob.prompt.strip() == prompt.strip():
+                return get_generator(prob.dimension).get_oracle_solution(prob)
         return "{\"solvable\": false}"
 
     client = MockClient(cfg, oracle_solver=oracle_solver, mock_mode="oracle")

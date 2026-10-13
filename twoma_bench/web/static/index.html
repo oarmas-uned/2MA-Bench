@@ -492,9 +492,12 @@
         <div class="form-group">
           <label for="provider-select">Provider Protocol</label>
           <select id="provider-select">
-            <option value="openai" selected>OpenAI Compatible (OpenAI, DeepSeek, vLLM, Ollama, OpenRouter, Groq)</option>
-            <option value="anthropic">Anthropic Claude Messages API</option>
-            <option value="mock">Offline Mock / Sanity Oracle</option>
+            <option value="openai" selected>OpenAI Compatible (GPT-4o / o1 / Custom)</option>
+            <option value="anthropic">Anthropic Claude Messages API (Claude 3.7)</option>
+            <option value="gemini">Google Gemini (Gemini 2.5 Pro / Flash)</option>
+            <option value="deepseek">DeepSeek (R1 Reasoner / V3)</option>
+            <option value="ollama">Local Ollama (localhost:11434)</option>
+            <option value="mock">Offline Mock / Deterministic Oracle</option>
           </select>
         </div>
 
@@ -537,13 +540,41 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="eval-difficulty">Hardness Difficulty</label>
-          <select id="eval-difficulty">
-            <option value="1" selected>Tier 1: Standard Frontier (Hard)</option>
-            <option value="2">Tier 2: Extreme Reasoning (Very Hard)</option>
-            <option value="3">Tier 3: Omega Singularity (Grandmaster)</option>
-          </select>
+        <div class="form-group" style="display: flex; gap: 0.75rem;">
+          <div style="flex: 1;">
+            <label for="eval-difficulty">Difficulty</label>
+            <select id="eval-difficulty">
+              <option value="1" selected>Tier 1: Standard Frontier</option>
+              <option value="2">Tier 2: Extreme Reasoning</option>
+              <option value="3">Tier 3: Omega Singularity</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label for="eval-samples-per-dim">Samples / Dim</label>
+            <select id="eval-samples-per-dim">
+              <option value="1" selected>1 (5 Tests)</option>
+              <option value="2">2 (10 Tests)</option>
+              <option value="3">3 (15 Tests)</option>
+              <option value="5">5 (25 Tests)</option>
+            </select>
+          </div>
+          <div style="width: 80px;">
+            <label for="eval-concurrency">Workers</label>
+            <select id="eval-concurrency">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div style="width: 110px;">
+            <label for="eval-max-tokens">Max Tokens</label>
+            <select id="eval-max-tokens">
+              <option value="4096">4,096</option>
+              <option value="8192" selected>8,192 (Rec.)</option>
+              <option value="16384">16,384</option>
+              <option value="32768">32,768</option>
+            </select>
+          </div>
         </div>
 
         <div class="form-group">
@@ -621,9 +652,11 @@
             </div>
           </div>
 
-          <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem;">
+          <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem; flex-wrap: wrap;">
             <button class="btn btn-secondary" id="btn-export-json" disabled>💾 Export JSON</button>
-            <button class="btn btn-secondary" id="btn-export-md" disabled>📄 Export Markdown Report</button>
+            <button class="btn btn-secondary" id="btn-export-csv" disabled>📊 Export CSV</button>
+            <button class="btn btn-secondary" id="btn-export-md" disabled>📄 Export Markdown</button>
+            <button class="btn btn-secondary" id="btn-compare-runs" style="margin-left: auto;">⚖️ Compare Runs</button>
           </div>
         </div>
 
@@ -650,6 +683,32 @@
         <button id="btn-close-modal" class="btn btn-secondary" style="padding: 0.3rem 0.6rem;">✕</button>
       </div>
       <div id="modal-body" style="margin-top: 1rem;"></div>
+    </div>
+  </div>
+
+  <!-- Modal for model comparison -->
+  <div class="modal-overlay" id="compare-modal">
+    <div class="modal-content" style="max-width: 780px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.75rem;">
+        <h3 style="color: var(--accent-cyan);">⚖️ Frontier Model Comparison Matrix</h3>
+        <button id="btn-close-compare-modal" class="btn btn-secondary" style="padding: 0.3rem 0.6rem;">✕</button>
+      </div>
+      <div id="compare-modal-body" style="margin-top: 1rem;">
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+          <div style="flex: 1;">
+            <label style="font-size: 0.8rem; color: var(--text-muted);">Baseline Run (Model A)</label>
+            <select id="compare-run-a" style="width: 100%; margin-top: 0.25rem; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 0.4rem; border-radius: 4px;"></select>
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 0.8rem; color: var(--text-muted);">Candidate Run (Model B)</label>
+            <select id="compare-run-b" style="width: 100%; margin-top: 0.25rem; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 0.4rem; border-radius: 4px;"></select>
+          </div>
+          <div style="align-self: flex-end;">
+            <button class="btn btn-primary" id="btn-execute-compare">Compare</button>
+          </div>
+        </div>
+        <div id="compare-diff-view" style="font-family: var(--font-mono); font-size: 0.85rem;"></div>
+      </div>
     </div>
   </div>
 
@@ -745,6 +804,15 @@
         if (p === "anthropic") {
           baseUrlInput.value = "https://api.anthropic.com/v1";
           modelInput.value = "claude-3-7-sonnet";
+        } else if (p === "gemini") {
+          baseUrlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai";
+          modelInput.value = "gemini-2.5-pro";
+        } else if (p === "deepseek") {
+          baseUrlInput.value = "https://api.deepseek.com/v1";
+          modelInput.value = "deepseek-reasoner";
+        } else if (p === "ollama") {
+          baseUrlInput.value = "http://localhost:11434/v1";
+          modelInput.value = "llama3.3:70b";
         } else if (p === "mock") {
           baseUrlInput.value = "http://localhost:8088";
           modelInput.value = "mock-oracle-v1";
@@ -761,11 +829,19 @@
       document.getElementById("btn-test-connection").addEventListener("click", testConnection);
       document.getElementById("btn-start-benchmark").addEventListener("click", launchBenchmark);
       document.getElementById("btn-export-json").addEventListener("click", exportJson);
+      document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
       document.getElementById("btn-export-md").addEventListener("click", exportMarkdown);
+      document.getElementById("btn-compare-runs").addEventListener("click", openCompareModal);
 
       document.getElementById("btn-close-modal").addEventListener("click", () => {
         document.getElementById("detail-modal").style.display = "none";
       });
+
+      document.getElementById("btn-close-compare-modal").addEventListener("click", () => {
+        document.getElementById("compare-modal").style.display = "none";
+      });
+
+      document.getElementById("btn-execute-compare").addEventListener("click", executeComparison);
     }
 
     function getApiBaseUrl() {
@@ -835,6 +911,9 @@
         model: document.getElementById("model-name").value,
         seed: parseInt(document.getElementById("eval-seed").value, 10),
         difficulty: parseInt(document.getElementById("eval-difficulty").value, 10),
+        samples_per_dimension: parseInt(document.getElementById("eval-samples-per-dim")?.value || "1", 10),
+        max_concurrency: parseInt(document.getElementById("eval-concurrency")?.value || "2", 10),
+        max_tokens: parseInt(document.getElementById("eval-max-tokens")?.value || "8192", 10),
         dimensions: selectedDims,
       };
 
@@ -940,6 +1019,7 @@
 
         // Enable export buttons
         document.getElementById("btn-export-json").disabled = false;
+        document.getElementById("btn-export-csv").disabled = false;
         document.getElementById("btn-export-md").disabled = false;
 
         // Update Metrics
@@ -1014,9 +1094,118 @@
       a.click();
     }
 
+    function exportCsv() {
+      if (!currentRunId) return;
+      window.open(`${getApiBaseUrl()}/api/export/${currentRunId}/csv`, "_blank");
+    }
+
     function exportMarkdown() {
       if (!currentRunId) return;
-      window.open(`/api/export/${currentRunId}/markdown`, "_blank");
+      window.open(`${getApiBaseUrl()}/api/export/${currentRunId}/markdown`, "_blank");
+    }
+
+    async function openCompareModal() {
+      const modal = document.getElementById("compare-modal");
+      const selA = document.getElementById("compare-run-a");
+      const selB = document.getElementById("compare-run-b");
+      const diffView = document.getElementById("compare-diff-view");
+
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/runs`);
+        const runs = await res.json();
+        if (!runs || runs.length < 2) {
+          diffView.innerHTML = `<p style="color: var(--accent-amber); padding: 1rem;">Complete at least 2 benchmark runs first to compare models.</p>`;
+          modal.style.display = "flex";
+          return;
+        }
+
+        selA.innerHTML = "";
+        selB.innerHTML = "";
+        runs.forEach((r, idx) => {
+          const optA = document.createElement("option");
+          optA.value = r.run_id;
+          optA.textContent = `${r.model} (${r.overall_score}%) - ${r.run_id}`;
+          selA.appendChild(optA);
+
+          const optB = document.createElement("option");
+          optB.value = r.run_id;
+          optB.textContent = `${r.model} (${r.overall_score}%) - ${r.run_id}`;
+          if (idx === runs.length - 1) optB.selected = true;
+          selB.appendChild(optB);
+        });
+
+        diffView.innerHTML = `<p style="color: var(--text-muted); padding: 1rem;">Select two runs above and click <strong>Compare</strong>.</p>`;
+        modal.style.display = "flex";
+      } catch (e) {
+        alert("Failed to load run history: " + e.message);
+      }
+    }
+
+    async function executeComparison() {
+      const runA = document.getElementById("compare-run-a").value;
+      const runB = document.getElementById("compare-run-b").value;
+      const diffView = document.getElementById("compare-diff-view");
+
+      if (!runA || !runB) return;
+      if (runA === runB) {
+        diffView.innerHTML = `<p style="color: var(--accent-amber); padding: 0.5rem;">Please select two different runs to compare.</p>`;
+        return;
+      }
+
+      diffView.innerHTML = "<p style='color: var(--accent-cyan);'>Loading comparison matrix...</p>";
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/compare?run_a=${runA}&run_b=${runB}`);
+        const data = await res.json();
+
+        let diffColor = data.score_diff > 0 ? "var(--accent-green)" : (data.score_diff < 0 ? "var(--accent-red)" : "#fff");
+        let diffPrefix = data.score_diff > 0 ? "+" : "";
+
+        let html = `
+          <div style="background: rgba(0,0,0,0.4); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>${escapeHtml(data.run_a.model)}</strong>: <span style="color: var(--accent-cyan);">${data.run_a.overall_score}%</span>
+                <span style="color: var(--text-muted); font-size: 0.75rem;">(${data.run_a.average_latency_ms}ms)</span>
+              </div>
+              <div style="font-size: 1.1rem; font-weight: bold; color: ${diffColor};">
+                Δ ${diffPrefix}${data.score_diff}%
+              </div>
+              <div>
+                <strong>${escapeHtml(data.run_b.model)}</strong>: <span style="color: var(--accent-purple);">${data.run_b.overall_score}%</span>
+                <span style="color: var(--text-muted); font-size: 0.75rem;">(${data.run_b.average_latency_ms}ms)</span>
+              </div>
+            </div>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
+                <th style="padding: 0.5rem;">Dimension</th>
+                <th style="padding: 0.5rem; text-align: right;">${escapeHtml(data.run_a.model)}</th>
+                <th style="padding: 0.5rem; text-align: right;">${escapeHtml(data.run_b.model)}</th>
+                <th style="padding: 0.5rem; text-align: right;">Diff</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        data.dimensions.forEach((d) => {
+          const dColor = d.diff > 0 ? "var(--accent-green)" : (d.diff < 0 ? "var(--accent-red)" : "var(--text-muted)");
+          const dPrefix = d.diff > 0 ? "+" : "";
+          html += `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+              <td style="padding: 0.5rem;">${DIMENSION_LABELS[d.dimension] || d.dimension}</td>
+              <td style="padding: 0.5rem; text-align: right;">${d.model_a_score}%</td>
+              <td style="padding: 0.5rem; text-align: right;">${d.model_b_score}%</td>
+              <td style="padding: 0.5rem; text-align: right; color: ${dColor}; font-weight: bold;">${dPrefix}${d.diff}%</td>
+            </tr>
+          `;
+        });
+
+        html += `</tbody></table>`;
+        diffView.innerHTML = html;
+      } catch (err) {
+        diffView.innerHTML = `<p style="color: var(--accent-red);">Error loading comparison: ${err.message}</p>`;
+      }
     }
   </script>
 </body>

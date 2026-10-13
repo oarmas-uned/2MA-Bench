@@ -206,26 +206,26 @@ class ConstraintSatisfactionGenerator(BaseGenerator):
 
     async def verify(self, problem: BenchmarkProblem, model_output: str) -> VerifierResult:
         """Extract JSON assignment and verify exact match with ground truth."""
-        ground_truth: Dict[str, int] = problem.ground_truth
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", model_output, re.DOTALL)
-        
-        extracted_data = None
-        if json_match:
-            try:
-                extracted_data = json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-        
-        if not extracted_data:
-            # Fallback: look for raw JSON anywhere
-            raw_match = re.search(r"\{\s*\"assignment\".*?\}", model_output, re.DOTALL)
-            if raw_match:
-                try:
-                    extracted_data = json.loads(raw_match.group(0))
-                except json.JSONDecodeError:
-                    pass
+        from .parser_utils import extract_json_dict, extract_key_value_assignments
 
-        if not extracted_data or "assignment" not in extracted_data:
+        ground_truth: Dict[str, int] = problem.ground_truth
+        var_keys = list(ground_truth.keys())
+
+        # 1. Attempt JSON block extraction with relaxed sanitization and wrapper unpacking
+        extracted_data = extract_json_dict(model_output, target_keys=var_keys, prefer_last=True)
+
+        user_assignment = None
+        if extracted_data and isinstance(extracted_data, dict):
+            if "assignment" in extracted_data and isinstance(extracted_data["assignment"], dict):
+                user_assignment = extracted_data["assignment"]
+            elif any(v in extracted_data for v in var_keys):
+                user_assignment = extracted_data
+
+        # 2. Resilient fallback: extract key-value assignments directly from text / tables
+        if not user_assignment:
+            user_assignment = extract_key_value_assignments(model_output, target_keys=var_keys)
+
+        if not user_assignment or not isinstance(user_assignment, dict):
             return VerifierResult(
                 problem_id=problem.id,
                 dimension=self.dimension_id,
@@ -233,18 +233,6 @@ class ConstraintSatisfactionGenerator(BaseGenerator):
                 score=0.0,
                 ground_truth=ground_truth,
                 failure_reason="Could not extract valid JSON `assignment` dictionary from output.",
-            )
-
-        user_assignment = extracted_data["assignment"]
-        if not isinstance(user_assignment, dict):
-            return VerifierResult(
-                problem_id=problem.id,
-                dimension=self.dimension_id,
-                passed=False,
-                score=0.0,
-                extracted_answer=user_assignment,
-                ground_truth=ground_truth,
-                failure_reason="`assignment` is not a key-value mapping.",
             )
 
         # Check all variables present and equal

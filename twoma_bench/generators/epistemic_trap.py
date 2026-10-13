@@ -26,7 +26,7 @@ class EpistemicTrapGenerator(BaseGenerator):
 
     def generate(self, seed: int, difficulty: int = 1) -> BenchmarkProblem:
         rng = random.Random(seed)
-        problem_type = rng.choice(["diophantine", "eulerian_graph"])
+        problem_type = rng.choice(["diophantine", "eulerian_graph", "modular_system"])
         is_impossible = (rng.random() < 0.5)
 
         if problem_type == "diophantine":
@@ -72,7 +72,8 @@ class EpistemicTrapGenerator(BaseGenerator):
                 f"Determine whether there exist any integers x, y that satisfy this equation.\n"
                 f"- If NO integer solution exists, prove why it is impossible.\n"
                 f"- If solutions exist, provide one valid pair of integers (x, y).\n\n"
-                f"Your response MUST include a valid JSON block enclosed in ```json and ```:\n"
+                f"Task & Submission Guidelines:\n"
+                f"Provide your answer inside a valid JSON block enclosed in ```json and ```:\n"
                 f"If solvable:\n"
                 f"```json\n"
                 f'{{\n  "solvable": true,\n  "x": <integer>,\n  "y": <integer>\n}}\n'
@@ -84,6 +85,54 @@ class EpistemicTrapGenerator(BaseGenerator):
             )
 
             title = f"Diophantine Equation: {A}x + {B}y = {C}"
+
+        elif problem_type == "modular_system":
+            # System of simultaneous congruences: x ≡ a (mod m1), x ≡ b (mod m2)
+            g = rng.choice([4, 6, 8, 10])
+            k1 = rng.choice([3, 5])
+            k2 = rng.choice([7, 11])
+            m1 = g * k1
+            m2 = g * k2
+
+            if is_impossible:
+                rem = rng.randint(1, g - 1)
+                a = rng.randint(0, m1 - 1)
+                b = (a + rem) % m2
+                contradiction = f"gcd({m1}, {m2}) = {g}. But {a} mod {g} = {a % g} while {b} mod {g} = {b % g}. Since {a % g} != {b % g}, by the Chinese Remainder Theorem no integer solution x exists."
+                ground_truth = {"solvable": False, "contradiction": contradiction, "gcd": g, "m1": m1, "m2": m2, "a": a, "b": b}
+            else:
+                sample_x = rng.randint(10, 500)
+                a = sample_x % m1
+                b = sample_x % m2
+                ground_truth = {
+                    "solvable": True,
+                    "m1": m1,
+                    "m2": m2,
+                    "a": a,
+                    "b": b,
+                    "sample_solution": {"x": sample_x},
+                }
+
+            prompt = (
+                f"Consider the following system of simultaneous congruences for integer x in Z:\n\n"
+                f"    x ≡ {a} (mod {m1})\n"
+                f"    x ≡ {b} (mod {m2})\n\n"
+                f"Determine whether there exists any integer x satisfying both congruences.\n"
+                f"- If NO integer solution exists, prove why it is impossible.\n"
+                f"- If solutions exist, provide one valid integer x.\n\n"
+                f"Task & Submission Guidelines:\n"
+                f"Provide your answer inside a valid JSON block enclosed in ```json and ```:\n"
+                f"If solvable:\n"
+                f"```json\n"
+                f'{{\n  "solvable": true,\n  "x": <integer>\n}}\n'
+                f"```\n"
+                f"If provably impossible:\n"
+                f"```json\n"
+                f'{{\n  "solvable": false,\n  "contradiction": "<exact mathematical reason>"\n}}\n'
+                f"```"
+            )
+
+            title = f"Modular System: x ≡ {a} (mod {m1}), x ≡ {b} (mod {m2})"
 
         else:
             # Eulerian Path on a graph
@@ -184,24 +233,29 @@ class EpistemicTrapGenerator(BaseGenerator):
         )
 
     async def verify(self, problem: BenchmarkProblem, model_output: str) -> VerifierResult:
+        from .parser_utils import extract_json_dict, strip_reasoning_tags
+
         is_actually_impossible = problem.is_impossible
         ground_truth = problem.ground_truth
 
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", model_output, re.DOTALL)
-        extracted_data = None
-        if json_match:
-            try:
-                extracted_data = json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
+        # 1. Attempt JSON block extraction with relaxed sanitization
+        extracted_data = extract_json_dict(model_output, target_keys=["solvable"], prefer_last=True)
 
-        if not extracted_data:
-            raw_match = re.search(r"\{\s*\"solvable\".*?\}", model_output, re.DOTALL)
-            if raw_match:
-                try:
-                    extracted_data = json.loads(raw_match.group(0))
-                except json.JSONDecodeError:
-                    pass
+        if not extracted_data or "solvable" not in extracted_data:
+            # Fallback 1: regex search for solvable boolean
+            solv_match = re.search(r'["\']?(?:is_)?solvable["\']?\s*[:=]\s*(true|false)', model_output, re.IGNORECASE)
+            if solv_match:
+                extracted_data = extracted_data or {}
+                extracted_data["solvable"] = solv_match.group(1).lower() == "true"
+            else:
+                # Fallback 2: text heuristic on non-reasoning text
+                cleaned = strip_reasoning_tags(model_output).lower()
+                if any(phrase in cleaned for phrase in ["no solution exists", "impossible", "not solvable", "no eulerian path exists", "no valid assignment"]):
+                    extracted_data = extracted_data or {}
+                    extracted_data["solvable"] = False
+                elif any(phrase in cleaned for phrase in ["solution exists", "is solvable", "eulerian path exists"]):
+                    extracted_data = extracted_data or {}
+                    extracted_data["solvable"] = True
 
         if not extracted_data or "solvable" not in extracted_data:
             return VerifierResult(
@@ -272,6 +326,35 @@ class EpistemicTrapGenerator(BaseGenerator):
                                 )
                         except (ValueError, TypeError):
                             pass
+                elif problem.metadata.get("problem_type") == "modular_system":
+                    x = extracted_data.get("x")
+                    if x is not None:
+                        try:
+                            m1 = ground_truth["m1"]
+                            m2 = ground_truth["m2"]
+                            a = ground_truth["a"]
+                            b = ground_truth["b"]
+                            if int(x) % m1 == a and int(x) % m2 == b:
+                                return VerifierResult(
+                                    problem_id=problem.id,
+                                    dimension=self.dimension_id,
+                                    passed=True,
+                                    score=1.0,
+                                    extracted_answer=extracted_data,
+                                    ground_truth=ground_truth,
+                                )
+                            else:
+                                return VerifierResult(
+                                    problem_id=problem.id,
+                                    dimension=self.dimension_id,
+                                    passed=False,
+                                    score=0.0,
+                                    extracted_answer=extracted_data,
+                                    ground_truth=ground_truth,
+                                    failure_reason=f"Solution {x} does not satisfy congruences: {x} % {m1} = {int(x)%m1} (expected {a}), {x} % {m2} = {int(x)%m2} (expected {b})",
+                                )
+                        except (ValueError, TypeError):
+                            pass
                 return VerifierResult(
                     problem_id=problem.id,
                     dimension=self.dimension_id,
@@ -298,4 +381,7 @@ class EpistemicTrapGenerator(BaseGenerator):
             if problem.metadata.get("problem_type") == "diophantine":
                 sol = problem.ground_truth.get("sample_solution", {"x": 0, "y": 0})
                 return f"```json\n{{\n  \"solvable\": true,\n  \"x\": {sol['x']},\n  \"y\": {sol['y']}\n}}\n```"
+            elif problem.metadata.get("problem_type") == "modular_system":
+                sol = problem.ground_truth.get("sample_solution", {"x": 0})
+                return f"```json\n{{\n  \"solvable\": true,\n  \"x\": {sol['x']}\n}}\n```"
             return "```json\n{\n  \"solvable\": true\n}\n```"

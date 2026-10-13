@@ -35,14 +35,22 @@ def list_dimensions() -> List[Dict[str, str]]:
 
 
 def generate_benchmark_suite(
-    seed: int, difficulty: int = 1, dimensions: Optional[List[str]] = None
+    seed: int,
+    difficulty: int = 1,
+    dimensions: Optional[List[str]] = None,
+    samples_per_dimension: int = 1,
 ) -> List[BenchmarkProblem]:
-    """Generates a complete or subset test suite with the given seed and difficulty."""
+    """Generates a complete or subset test suite with the given seed, difficulty, and sample count."""
     dims = dimensions or list(_REGISTRY.keys())
     problems: List[BenchmarkProblem] = []
-    for dim_id in dims:
+    samples = max(1, samples_per_dimension)
+
+    for dim_idx, dim_id in enumerate(dims):
         if dim_id in _REGISTRY:
-            problems.append(_REGISTRY[dim_id].generate(seed, difficulty))
+            gen = _REGISTRY[dim_id]
+            for s_idx in range(samples):
+                problem_seed = seed + (s_idx * 1000) + (dim_idx * 17)
+                problems.append(gen.generate(problem_seed, difficulty))
     return problems
 
 

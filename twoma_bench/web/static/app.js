@@ -84,6 +84,15 @@ function setupEventListeners() {
     if (p === "anthropic") {
       baseUrlInput.value = "https://api.anthropic.com/v1";
       modelInput.value = "claude-3-7-sonnet";
+    } else if (p === "gemini") {
+      baseUrlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai";
+      modelInput.value = "gemini-2.5-pro";
+    } else if (p === "deepseek") {
+      baseUrlInput.value = "https://api.deepseek.com/v1";
+      modelInput.value = "deepseek-reasoner";
+    } else if (p === "ollama") {
+      baseUrlInput.value = "http://localhost:11434/v1";
+      modelInput.value = "llama3.3:70b";
     } else if (p === "mock") {
       baseUrlInput.value = "http://localhost:8088";
       modelInput.value = "mock-oracle-v1";
@@ -100,11 +109,19 @@ function setupEventListeners() {
   document.getElementById("btn-test-connection").addEventListener("click", testConnection);
   document.getElementById("btn-start-benchmark").addEventListener("click", launchBenchmark);
   document.getElementById("btn-export-json").addEventListener("click", exportJson);
+  document.getElementById("btn-export-csv")?.addEventListener("click", exportCsv);
   document.getElementById("btn-export-md").addEventListener("click", exportMarkdown);
+  document.getElementById("btn-compare-runs")?.addEventListener("click", openCompareModal);
 
   document.getElementById("btn-close-modal").addEventListener("click", () => {
     document.getElementById("detail-modal").style.display = "none";
   });
+
+  document.getElementById("btn-close-compare-modal")?.addEventListener("click", () => {
+    document.getElementById("compare-modal").style.display = "none";
+  });
+
+  document.getElementById("btn-execute-compare")?.addEventListener("click", executeComparison);
 }
 
 function getApiBaseUrl() {
@@ -174,6 +191,9 @@ async function launchBenchmark() {
     model: document.getElementById("model-name").value,
     seed: parseInt(document.getElementById("eval-seed").value, 10),
     difficulty: parseInt(document.getElementById("eval-difficulty").value, 10),
+    samples_per_dimension: parseInt(document.getElementById("eval-samples-per-dim")?.value || "1", 10),
+    max_concurrency: parseInt(document.getElementById("eval-concurrency")?.value || "2", 10),
+    max_tokens: parseInt(document.getElementById("eval-max-tokens")?.value || "8192", 10),
     dimensions: selectedDims,
   };
 
@@ -279,6 +299,7 @@ function handleServerEvent(event) {
 
     // Enable export buttons
     document.getElementById("btn-export-json").disabled = false;
+    document.getElementById("btn-export-csv").disabled = false;
     document.getElementById("btn-export-md").disabled = false;
 
     // Update Metrics
@@ -353,7 +374,116 @@ function exportJson() {
   a.click();
 }
 
+function exportCsv() {
+  if (!currentRunId) return;
+  window.open(`${getApiBaseUrl()}/api/export/${currentRunId}/csv`, "_blank");
+}
+
 function exportMarkdown() {
   if (!currentRunId) return;
-  window.open(`/api/export/${currentRunId}/markdown`, "_blank");
+  window.open(`${getApiBaseUrl()}/api/export/${currentRunId}/markdown`, "_blank");
+}
+
+async function openCompareModal() {
+  const modal = document.getElementById("compare-modal");
+  const selA = document.getElementById("compare-run-a");
+  const selB = document.getElementById("compare-run-b");
+  const diffView = document.getElementById("compare-diff-view");
+
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/api/runs`);
+    const runs = await res.json();
+    if (!runs || runs.length < 2) {
+      diffView.innerHTML = `<p style="color: var(--accent-amber); padding: 1rem;">Complete at least 2 benchmark runs first to compare models.</p>`;
+      modal.style.display = "flex";
+      return;
+    }
+
+    selA.innerHTML = "";
+    selB.innerHTML = "";
+    runs.forEach((r, idx) => {
+      const optA = document.createElement("option");
+      optA.value = r.run_id;
+      optA.textContent = `${r.model} (${r.overall_score}%) - ${r.run_id}`;
+      selA.appendChild(optA);
+
+      const optB = document.createElement("option");
+      optB.value = r.run_id;
+      optB.textContent = `${r.model} (${r.overall_score}%) - ${r.run_id}`;
+      if (idx === runs.length - 1) optB.selected = true;
+      selB.appendChild(optB);
+    });
+
+    diffView.innerHTML = `<p style="color: var(--text-muted); padding: 1rem;">Select two runs above and click <strong>Compare</strong>.</p>`;
+    modal.style.display = "flex";
+  } catch (e) {
+    alert("Failed to load run history: " + e.message);
+  }
+}
+
+async function executeComparison() {
+  const runA = document.getElementById("compare-run-a").value;
+  const runB = document.getElementById("compare-run-b").value;
+  const diffView = document.getElementById("compare-diff-view");
+
+  if (!runA || !runB) return;
+  if (runA === runB) {
+    diffView.innerHTML = `<p style="color: var(--accent-amber); padding: 0.5rem;">Please select two different runs to compare.</p>`;
+    return;
+  }
+
+  diffView.innerHTML = "<p style='color: var(--accent-cyan);'>Loading comparison matrix...</p>";
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/api/compare?run_a=${runA}&run_b=${runB}`);
+    const data = await res.json();
+
+    let diffColor = data.score_diff > 0 ? "var(--accent-green)" : (data.score_diff < 0 ? "var(--accent-red)" : "#fff");
+    let diffPrefix = data.score_diff > 0 ? "+" : "";
+
+    let html = `
+      <div style="background: rgba(0,0,0,0.4); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <strong>${escapeHtml(data.run_a.model)}</strong>: <span style="color: var(--accent-cyan);">${data.run_a.overall_score}%</span>
+            <span style="color: var(--text-muted); font-size: 0.75rem;">(${data.run_a.average_latency_ms}ms)</span>
+          </div>
+          <div style="font-size: 1.1rem; font-weight: bold; color: ${diffColor};">
+            Δ ${diffPrefix}${data.score_diff}%
+          </div>
+          <div>
+            <strong>${escapeHtml(data.run_b.model)}</strong>: <span style="color: var(--accent-purple);">${data.run_b.overall_score}%</span>
+            <span style="color: var(--text-muted); font-size: 0.75rem;">(${data.run_b.average_latency_ms}ms)</span>
+          </div>
+        </div>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; text-align: left;">
+        <thead>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
+            <th style="padding: 0.5rem;">Dimension</th>
+            <th style="padding: 0.5rem; text-align: right;">${escapeHtml(data.run_a.model)}</th>
+            <th style="padding: 0.5rem; text-align: right;">${escapeHtml(data.run_b.model)}</th>
+            <th style="padding: 0.5rem; text-align: right;">Diff</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    data.dimensions.forEach((d) => {
+      const dColor = d.diff > 0 ? "var(--accent-green)" : (d.diff < 0 ? "var(--accent-red)" : "var(--text-muted)");
+      const dPrefix = d.diff > 0 ? "+" : "";
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+          <td style="padding: 0.5rem;">${DIMENSION_LABELS[d.dimension] || d.dimension}</td>
+          <td style="padding: 0.5rem; text-align: right;">${d.model_a_score}%</td>
+          <td style="padding: 0.5rem; text-align: right;">${d.model_b_score}%</td>
+          <td style="padding: 0.5rem; text-align: right; color: ${dColor}; font-weight: bold;">${dPrefix}${d.diff}%</td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table>`;
+    diffView.innerHTML = html;
+  } catch (err) {
+    diffView.innerHTML = `<p style="color: var(--accent-red);">Error loading comparison: ${err.message}</p>`;
+  }
 }

@@ -54,6 +54,14 @@ class VirtualMachine:
                 r1, r2 = instr["r1"], instr["r2"]
                 self.registers[r1], self.registers[r2] = self.registers[r2], self.registers[r1]
                 self.pc += 1
+            elif op == "SHL":
+                r = instr["r1"]
+                self.registers[r] = (self.registers[r] << 1) % 256
+                self.pc += 1
+            elif op == "SHR":
+                r = instr["r1"]
+                self.registers[r] = (self.registers[r] >> 1) % 256
+                self.pc += 1
             elif op == "JNZ":
                 r, target = instr["r1"], instr["target"]
                 if self.registers[r] != 0:
@@ -109,8 +117,12 @@ class StateMachineGenerator(BaseGenerator):
         # 2. Loop body with arithmetic / bitwise / swap operations
         loop_start = 1
         num_body_ops = 4 + difficulty * 2
+        allowed_ops = ["ADD", "SUB", "XOR", "INC", "SWP"]
+        if difficulty >= 2:
+            allowed_ops.extend(["SHL", "SHR"])
+
         for _ in range(num_body_ops):
-            op = rng.choice(["ADD", "SUB", "XOR", "INC", "SWP"])
+            op = rng.choice(allowed_ops)
             r1 = rng.choice(reg_names[1:])
             r2 = rng.choice(reg_names[1:])
             if op == "INC":
@@ -119,6 +131,9 @@ class StateMachineGenerator(BaseGenerator):
             elif op == "SWP":
                 instructions.append({"op": "SWP", "r1": r1, "r2": r2})
                 assembly_lines.append(f"{len(instructions)-1}: SWP {r1}, {r2}")
+            elif op in ("SHL", "SHR"):
+                instructions.append({"op": op, "r1": r1})
+                assembly_lines.append(f"{len(instructions)-1}: {op} {r1}")
             else:
                 instructions.append({"op": op, "r1": r1, "r2": r2})
                 assembly_lines.append(f"{len(instructions)-1}: {op} {r1}, {r2}")
@@ -160,6 +175,8 @@ class StateMachineGenerator(BaseGenerator):
             f"- ADD Rx, Ry      : Rx = (Rx + Ry) % 256\n"
             f"- SUB Rx, Ry      : Rx = (Rx - Ry) % 256\n"
             f"- XOR Rx, Ry      : Rx = (Rx ^ Ry) % 256\n"
+            f"- SHL Rx          : Rx = (Rx << 1) % 256 (logical shift left 1 bit)\n"
+            f"- SHR Rx          : Rx = (Rx >> 1) % 256 (logical shift right 1 bit)\n"
             f"- INC Rx          : Rx = (Rx + 1) % 256\n"
             f"- DEC Rx          : Rx = (Rx - 1) % 256\n"
             f"- SWP Rx, Ry      : Swap the values of Rx and Ry\n"
@@ -167,8 +184,10 @@ class StateMachineGenerator(BaseGenerator):
             f"- HALT            : Stop execution\n\n"
             f"Program Listing:\n"
             f"```assembly\n{program_text}\n```\n\n"
-            f"Calculate the EXACT final values of all registers when the machine halts.\n"
-            f"Output your answer in a valid JSON block enclosed in ```json and ```:\n"
+            f"Task & Submission Guidelines:\n"
+            f"1. Accurately simulate the machine state adhering strictly to 8-bit modulo 256 arithmetic.\n"
+            f"2. Calculate the final values of all registers when the machine halts.\n"
+            f"3. You may reason step-by-step, but you MUST conclude your response with the final register values in a valid JSON block enclosed in ```json and ```:\n"
             f"```json\n"
             f"{{\n"
             + ",\n".join(f'  "{r}": <int>' for r in reg_names)
@@ -189,23 +208,17 @@ class StateMachineGenerator(BaseGenerator):
         )
 
     async def verify(self, problem: BenchmarkProblem, model_output: str) -> VerifierResult:
-        ground_truth: Dict[str, int] = problem.ground_truth
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", model_output, re.DOTALL)
-        
-        extracted_data = None
-        if json_match:
-            try:
-                extracted_data = json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
+        from .parser_utils import extract_json_dict, extract_key_value_assignments
 
-        if not extracted_data:
-            raw_match = re.search(r"\{\s*\"R0\".*?\}", model_output, re.DOTALL)
-            if raw_match:
-                try:
-                    extracted_data = json.loads(raw_match.group(0))
-                except json.JSONDecodeError:
-                    pass
+        ground_truth: Dict[str, int] = problem.ground_truth
+        reg_keys = list(ground_truth.keys())
+
+        # 1. Attempt JSON block extraction with relaxed sanitization and wrapper unpacking
+        extracted_data = extract_json_dict(model_output, target_keys=reg_keys, prefer_last=True)
+
+        # 2. Resilient fallback: extract key-value assignments directly from text / tables
+        if not extracted_data or not any(k in extracted_data for k in reg_keys):
+            extracted_data = extract_key_value_assignments(model_output, target_keys=reg_keys)
 
         if not extracted_data or not isinstance(extracted_data, dict):
             return VerifierResult(

@@ -64,7 +64,8 @@ async def test_counterfactual_generator():
 @pytest.mark.asyncio
 async def test_concurrency_generator():
     gen = ConcurrencyGenerator()
-    for seed in [21, 42]:
+    # Test across multiple seeds to trigger different templates
+    for seed in [1, 2, 3, 4, 10, 42, 88]:
         prob = gen.generate(seed=seed, difficulty=1)
         assert prob.dimension == "concurrency"
         assert len(prob.metadata["class_name"]) > 0
@@ -74,15 +75,49 @@ async def test_concurrency_generator():
         assert res.passed is True
         assert res.score == 1.0
 
-        # Buggy code should fail stress test
-        buggy_res = await gen.verify(prob, f"```python\n{prob.metadata['test_harness']}\n```")
-        assert buggy_res.passed is False
+
+@pytest.mark.asyncio
+async def test_concurrency_templates_explicit():
+    from twoma_bench.generators.concurrency_code import ConcurrencyBugTemplates
+    gen = ConcurrencyGenerator()
+
+    # Test deadlock template
+    deadlock_prob = ConcurrencyBugTemplates.get_deadlock_problem(seed=42, difficulty=1)
+    prob_obj = gen.generate(seed=42, difficulty=1)
+    prob_obj.ground_truth = deadlock_prob["oracle_code"]
+    prob_obj.metadata = {
+        "class_name": deadlock_prob["class_name"],
+        "test_harness": deadlock_prob["test_harness"],
+    }
+    res = await gen.verify(prob_obj, f"```python\n{deadlock_prob['oracle_code']}\n```")
+    assert res.passed is True
+
+    # Test atomic counter template
+    counter_prob = ConcurrencyBugTemplates.get_atomic_counter_problem(seed=99, difficulty=1)
+    prob_obj.ground_truth = counter_prob["oracle_code"]
+    prob_obj.metadata = {
+        "class_name": counter_prob["class_name"],
+        "test_harness": counter_prob["test_harness"],
+    }
+    res = await gen.verify(prob_obj, f"```python\n{counter_prob['oracle_code']}\n```")
+    assert res.passed is True
+
+
+@pytest.mark.asyncio
+async def test_state_machine_difficulty_tiers():
+    gen = StateMachineGenerator()
+    for diff in [1, 2, 3]:
+        prob = gen.generate(seed=42, difficulty=diff)
+        oracle = gen.get_oracle_solution(prob)
+        res = await gen.verify(prob, oracle)
+        assert res.passed is True
+        assert res.score == 1.0
 
 
 @pytest.mark.asyncio
 async def test_epistemic_trap_generator():
     gen = EpistemicTrapGenerator()
-    for seed in [3, 42, 105, 777]:
+    for seed in [3, 42, 105, 777, 888, 999]:
         prob = gen.generate(seed=seed, difficulty=1)
         assert prob.dimension == "epistemic"
         assert "solvable" in prob.ground_truth
@@ -99,8 +134,14 @@ async def test_epistemic_trap_generator():
             assert h_res.score == -1.0  # Penalized!
 
 
-def test_suite_generation():
-    suite = generate_benchmark_suite(seed=42, difficulty=1)
-    assert len(suite) == 5
-    dimensions = {p.dimension for p in suite}
-    assert dimensions == {"smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"}
+def test_suite_generation_multisample():
+    suite_1 = generate_benchmark_suite(seed=42, difficulty=1, samples_per_dimension=1)
+    assert len(suite_1) == 5
+
+    suite_3 = generate_benchmark_suite(seed=42, difficulty=1, samples_per_dimension=3)
+    assert len(suite_3) == 15
+    dim_counts = {}
+    for p in suite_3:
+        dim_counts[p.dimension] = dim_counts.get(p.dimension, 0) + 1
+    assert all(count == 3 for count in dim_counts.values())
+

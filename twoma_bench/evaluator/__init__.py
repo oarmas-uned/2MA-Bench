@@ -10,6 +10,8 @@ from .engine import (
     EvaluationEngine,
 )
 
+from .exporter import BenchmarkExporter
+
 __all__ = [
     "run_in_sandbox",
     "SandboxResult",
@@ -17,4 +19,5 @@ __all__ = [
     "ProblemEvaluationResult",
     "RunSummary",
     "EvaluationEngine",
+    "BenchmarkExporter",
 ]

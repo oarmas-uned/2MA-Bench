@@ -71,6 +71,17 @@ Open your browser at `http://localhost:8088`.
   --seed 101
 ```
 
+#### Test Google Gemini Models:
+```bash
+2ma-bench run \
+  --provider gemini \
+  --api-key "AIzaSy..." \
+  --model "gemini-2.5-pro" \
+  --samples-per-dim 3 \
+  --concurrency 3 \
+  --export report.csv
+```
+
 #### Test Anthropic Claude Models:
 ```bash
 2ma-bench run \
@@ -82,8 +93,14 @@ Open your browser at `http://localhost:8088`.
 
 #### Test in Offline Mock Mode (Zero API Key Needed):
 ```bash
-2ma-bench run --provider mock
+2ma-bench run --provider mock -n 2 -c 2 --export report.md
 ```
+
+---
+
+## 🧠 AI Prompting & Calibration
+
+For optimal benchmark performance and proper in-context schema training, see the [AI Calibration & In-Context Prompting Guide](AI_CALIBRATION_GUIDE.md). It outlines exact JSON schemas, 8-bit arithmetic rules, concurrency repair templates, and contradiction proof formatting.
 
 ---
 

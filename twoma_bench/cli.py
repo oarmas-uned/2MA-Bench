@@ -13,10 +13,11 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
-from .client.base import ClientConfig
+from .client.base import ClientConfig, PROVIDER_PRESETS
 from .client import create_client, MockClient
-from .generators import list_dimensions, get_generator
+from .generators import list_dimensions, get_generator, generate_benchmark_suite
 from .evaluator.engine import EvaluationConfig, EvaluationEngine, RunSummary
+from .evaluator.exporter import BenchmarkExporter
 
 console = Console()
 
@@ -32,7 +33,13 @@ def print_banner():
 async def run_benchmark_cli(args):
     print_banner()
 
-    api_key = args.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or ""
+    api_key = (
+        args.api_key
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or ""
+    )
     
     if args.provider != "mock" and not api_key:
         console.print("[yellow]Warning: No API key provided via --api-key or environment variables. Proceeding anyway...[/yellow]")
@@ -43,32 +50,46 @@ async def run_benchmark_cli(args):
         api_key=api_key,
         model=args.model,
         temperature=args.temperature,
+        max_tokens=args.max_tokens,
     )
 
     client = create_client(client_config)
 
+    dimensions = (
+        [d.strip() for d in args.dimensions.split(",")]
+        if args.dimensions != "all"
+        else ["smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"]
+    )
+
     # Handle mock client oracle wiring if needed
     if args.provider == "mock":
-        def oracle_solver(prompt: str) -> str:
-            for d in ["smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"]:
-                gen = get_generator(d)
-                prob = gen.generate(args.seed, args.difficulty)
-                if prob.prompt[:40] in prompt[:40]:
-                    return gen.get_oracle_solution(prob)
-            return "{\"solvable\": false}"
-        client = MockClient(client_config, oracle_solver=oracle_solver, mock_mode="oracle")
+        generated_problems = generate_benchmark_suite(
+            seed=args.seed,
+            difficulty=args.difficulty,
+            dimensions=dimensions,
+            samples_per_dimension=args.samples_per_dim,
+        )
 
-    dimensions = [d.strip() for d in args.dimensions.split(",")] if args.dimensions != "all" else ["smt_logic", "vm_emulation", "counterfactual", "concurrency", "epistemic"]
+        def oracle_solver(prompt: str) -> str:
+            for prob in generated_problems:
+                if prob.prompt.strip() == prompt.strip():
+                    gen = get_generator(prob.dimension)
+                    return gen.get_oracle_solution(prob)
+            return '{"solvable": false}'
+
+        client = MockClient(client_config, oracle_solver=oracle_solver, mock_mode="oracle")
 
     eval_config = EvaluationConfig(
         seed=args.seed,
         difficulty=args.difficulty,
+        samples_per_dimension=args.samples_per_dim,
+        max_concurrency=args.concurrency,
         dimensions=dimensions,
     )
 
     console.print(f"[cyan]Target Model:[/cyan] [bold]{args.model}[/bold] ({args.provider})")
-    console.print(f"[cyan]Endpoint:[/cyan] {args.base_url}")
-    console.print(f"[cyan]Seed:[/cyan] {args.seed} | [cyan]Difficulty:[/cyan] Tier {args.difficulty}")
+    console.print(f"[cyan]Endpoint:[/cyan] {client_config.base_url}")
+    console.print(f"[cyan]Seed:[/cyan] {args.seed} | [cyan]Difficulty:[/cyan] Tier {args.difficulty} | [cyan]Samples/Dim:[/cyan] {args.samples_per_dim} | [cyan]Concurrency:[/cyan] {args.concurrency}")
     console.print(f"[cyan]Dimensions:[/cyan] {', '.join(dimensions)}\n")
 
     with console.status("[bold green]Executing procedural challenges...", spinner="dots"):
@@ -108,14 +129,28 @@ async def run_benchmark_cli(args):
     )
     console.print(Panel(summary_text, title="Summary Metrics", border_style="cyan"))
 
+    # Failure Taxonomy table if any failed
+    if summary.passed_count < summary.total_problems and summary.failure_taxonomy:
+        fail_table = Table(title="Failure Taxonomy Breakdown", border_style="red")
+        fail_table.add_column("Category", style="bold red")
+        fail_table.add_column("Count", justify="right")
+        for cat, cnt in summary.failure_taxonomy.items():
+            if cat != "PASSED":
+                fail_table.add_row(cat, str(cnt))
+        console.print(fail_table)
+
     if args.export:
         if args.export.endswith(".json"):
             with open(args.export, "w", encoding="utf-8") as f:
-                json.dump(summary.model_dump(), f, indent=2)
+                f.write(BenchmarkExporter.to_json(summary))
             console.print(f"[green]Saved JSON report to {args.export}[/green]")
+        elif args.export.endswith(".csv"):
+            with open(args.export, "w", encoding="utf-8") as f:
+                f.write(BenchmarkExporter.to_csv(summary))
+            console.print(f"[green]Saved CSV report to {args.export}[/green]")
         elif args.export.endswith(".md"):
             with open(args.export, "w", encoding="utf-8") as f:
-                f.write(f"# 2MA-Bench Report for {summary.model}\n\nScore: {summary.overall_score}%\n")
+                f.write(BenchmarkExporter.to_markdown(summary))
             console.print(f"[green]Saved Markdown report to {args.export}[/green]")
 
     if summary.passed_count < summary.total_problems:
@@ -131,15 +166,18 @@ def main():
 
     # Command: run
     run_parser = subparsers.add_parser("run", help="Run 2MA-Bench evaluation")
-    run_parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "mock"], help="Provider type")
+    run_parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "gemini", "mock"], help="Provider type")
     run_parser.add_argument("--base-url", default="https://api.openai.com/v1", help="API Base URL")
     run_parser.add_argument("--api-key", default="", help="API key")
     run_parser.add_argument("--model", default="gpt-4o", help="Target model identifier")
     run_parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+    run_parser.add_argument("--max-tokens", type=int, default=8192, help="Maximum tokens for generation (default: 8192)")
     run_parser.add_argument("--seed", type=int, default=42, help="Procedural random seed")
     run_parser.add_argument("--difficulty", type=int, default=1, choices=[1, 2, 3], help="Difficulty tier")
+    run_parser.add_argument("-n", "--samples-per-dim", type=int, default=1, help="Samples per dimension")
+    run_parser.add_argument("-c", "--concurrency", type=int, default=2, help="Worker concurrency limit")
     run_parser.add_argument("--dimensions", default="all", help="Comma-separated dimensions or 'all'")
-    run_parser.add_argument("--export", default=None, help="Path to export report (.json or .md)")
+    run_parser.add_argument("--export", default=None, help="Path to export report (.json, .csv, or .md)")
 
     # Command: serve
     serve_parser = subparsers.add_parser("serve", help="Launch 2MA-Bench Web UI")

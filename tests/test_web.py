@@ -81,3 +81,38 @@ async def test_web_run_and_results():
         md_resp = await client.get(f"/api/export/{run_id}/markdown")
         assert md_resp.status_code == 200
         assert "# 2M AI Bench (2MA-Bench) Evaluation Report" in md_resp.text
+
+        # Check CSV export
+        csv_resp = await client.get(f"/api/export/{run_id}/csv")
+        assert csv_resp.status_code == 200
+        assert "run_id,model,problem_id" in csv_resp.text
+
+        # Check Presets endpoint
+        presets_resp = await client.get("/api/presets")
+        assert presets_resp.status_code == 200
+        presets = presets_resp.json()
+        assert "gemini" in presets
+        assert "openai" in presets
+
+        # Check Runs list endpoint
+        runs_resp = await client.get("/api/runs")
+        assert runs_resp.status_code == 200
+        runs_list = runs_resp.json()
+        assert any(r["run_id"] == run_id for r in runs_list)
+
+        # Launch a second run to test compare endpoint
+        res2 = await client.post("/api/run", json=run_req)
+        run_id2 = res2.json()["run_id"]
+        # Wait for run to complete via stream
+        async with client.stream("GET", f"/api/stream/{run_id2}") as stream_resp2:
+            async for line in stream_resp2.aiter_lines():
+                if "run_completed" in line:
+                    break
+
+        compare_resp = await client.get(f"/api/compare?run_a={run_id}&run_b={run_id2}")
+        assert compare_resp.status_code == 200
+        comp_data = compare_resp.json()
+        assert "run_a" in comp_data
+        assert "run_b" in comp_data
+        assert "dimensions" in comp_data
+
